@@ -1,0 +1,16 @@
+[package]
+name = "lakh"
+version = "0.1.0"
+authors = ["hy"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+hyper = "*"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.5.6"
+tokio = { version = "0.2", features = [ "macros", "time" ] }
+futures = "0.3.5"
+rand = "0.7.3"
+dashmap = "3.11.7"
