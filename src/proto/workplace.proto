@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package workplace;
+
+service Workplace {
+  rpc Assign(stream Job) returns (Void) {}
+  rpc Join(Offer) returns (stream Job) {}
+}
+
+message Job {
+  string name = 1;
+  repeated string args = 2;
+}
+
+message Offer {
+  string name = 1;
+}
+
+message Void {}
