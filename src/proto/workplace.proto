@@ -3,8 +3,12 @@ syntax = "proto3";
 package workplace;
 
 service Workplace {
-  rpc Assign(stream Job) returns (Void) {}
-  rpc Join(Offer) returns (stream Job) {}
+  rpc Assign(Job) returns (Void) {}
+  rpc Join(WorkerInfo) returns (Void) {}
+}
+
+service Worker {
+  rpc Work(Job) returns (WorkResult) {}
 }
 
 message Job {
@@ -12,8 +16,15 @@ message Job {
   repeated string args = 2;
 }
 
-message Offer {
-  string name = 1;
+message WorkerInfo {
+  repeated string availableJobs = 1;
+}
+
+message WorkResult {
+  enum Corpus {
+    SUCCESS = 0;
+    FAILURE = 1;
+  }
 }
 
 message Void {}

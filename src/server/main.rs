@@ -5,13 +5,14 @@ pub mod pb {
 }
 use pb::workplace_server::WorkplaceServer;
 
+mod queue;
 mod workplace;
 use workplace::LakhWorkplace;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50051".parse().unwrap();
-    let w = LakhWorkplace::default();
+    let w = LakhWorkplace::new();
 
     println!("GreeterServer listening on {}", addr);
 
