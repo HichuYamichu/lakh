@@ -5,26 +5,42 @@ package workplace;
 service Workplace {
   rpc Assign(Job) returns (Void) {}
   rpc Join(WorkerInfo) returns (Void) {}
+  rpc Report(ReportRequest) returns (Jobs) {}
 }
 
 service Worker {
-  rpc Work(Job) returns (WorkResult) {}
+  rpc Work(Job) returns (Void) {}
 }
+
+
 
 message Job {
   string name = 1;
   repeated string args = 2;
+  enum Kind {
+    IMMEDIATE = 0;
+    SCHEDULED = 1;
+    DELAYED = 2;
+  }; 
+  Kind kind = 3;
+}
+
+message Jobs {
+  repeated Job jobs = 1; 
 }
 
 message WorkerInfo {
   repeated string availableJobs = 1;
 }
 
-message WorkResult {
-  enum Corpus {
-    SUCCESS = 0;
-    FAILURE = 1;
+message ReportRequest {
+  repeated string jobNames = 1; 
+  enum Kind {
+    QUEUED = 0;
+    FINISHED = 1;
+    FAILED = 2;
   }
 }
+
 
 message Void {}

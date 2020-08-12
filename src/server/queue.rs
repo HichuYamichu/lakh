@@ -1,25 +1,40 @@
 use crate::pb::Job;
-use async_trait::async_trait;
-use tokio::sync::mpsc;
 
-#[async_trait]
 pub trait Queue {
-    async fn enque(&self, job: Job);
-    async fn deque(&mut self) -> Job;
+    fn enque(&mut self, job: Job);
+    fn deque(&mut self) -> Option<Job>;
 }
 
 pub struct FifoQueue {
-    tx: mpsc::Sender<Job>,
-    rx: mpsc::Receiver<Job>,
+    jobs: Vec<Job>,
 }
 
-#[async_trait]
 impl Queue for FifoQueue {
-    async fn enque(&self, job: Job) {
-        self.tx.clone().send(job).await.unwrap();
+    fn enque(&mut self, job: Job) {
+        self.jobs.push(job);
     }
 
-    async fn deque(&mut self) -> Job {
-        self.rx.recv().await.unwrap()
+    fn deque(&mut self) -> Option<Job> {
+        self.jobs.pop()
+    }
+}
+
+impl std::ops::Deref for FifoQueue {
+    type Target = Vec<Job>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.jobs
+    }
+}
+
+impl std::ops::DerefMut for FifoQueue {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.jobs
+    }
+}
+
+impl FifoQueue {
+    pub fn new() -> Self {
+        Self { jobs: Vec::new() }
     }
 }
