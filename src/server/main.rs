@@ -5,8 +5,12 @@ pub mod pb {
 }
 use pb::workplace_server::WorkplaceServer;
 
+mod archive;
+mod department;
 mod queue;
+mod worker;
 mod workplace;
+
 use workplace::LakhWorkplace;
 
 #[tokio::main]

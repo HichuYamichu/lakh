@@ -3,16 +3,9 @@ syntax = "proto3";
 package workplace;
 
 service Workplace {
-  rpc Assign(Job) returns (Void) {}
-  rpc Join(WorkerInfo) returns (Void) {}
-  rpc Report(ReportRequest) returns (Jobs) {}
+  rpc Send(Job) returns (Void) {}
+  rpc Work(stream JobResult) returns (stream Job) {}
 }
-
-service Worker {
-  rpc Work(Job) returns (Void) {}
-}
-
-
 
 message Job {
   string name = 1;
@@ -29,18 +22,14 @@ message Jobs {
   repeated Job jobs = 1; 
 }
 
-message WorkerInfo {
-  repeated string availableJobs = 1;
-}
-
-message ReportRequest {
-  repeated string jobNames = 1; 
-  enum Kind {
-    QUEUED = 0;
-    FINISHED = 1;
-    FAILED = 2;
+message JobResult {
+  Job job = 1;
+  enum Status {
+    FAILED = 0;
+    SUCCEEDED = 1;
   }
+  Status status = 2;
+  string info = 3;
 }
-
 
 message Void {}
