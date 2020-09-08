@@ -6,8 +6,7 @@ pub mod pb {
 use pb::workplace_server::WorkplaceServer;
 
 mod archive;
-mod department;
-mod queue;
+mod office;
 mod worker;
 mod workplace;
 
