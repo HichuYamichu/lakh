@@ -2,34 +2,70 @@ syntax = "proto3";
 
 package workplace;
 
+import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+// import "google.type.Date";
+
 service Workplace {
-  rpc Send(stream Job) returns (Void) {}
-  rpc Work(stream JobResult) returns (stream Job) {}
+  rpc Work(stream Job) returns (google.protobuf.Empty) {}
+  rpc Join(stream JobResult) returns (stream Job) {}
+  // rpc GetResults(GetResultsRequest) returns (GetResultsResponce) {}
+  // rpc GetQueues(GetQueuesRequest) returns (GetQueuesResponce) {}
 }
+
 
 message Job {
-  string name = 1;
-  repeated string args = 2;
-  enum Kind {
-    IMMEDIATE = 0;
-    SCHEDULED = 1;
-    DELAYED = 2;
-  }; 
-  Kind kind = 3;
+  int64 id = 1;
+  string name = 2;
+  repeated string args = 3;
+  JobKind kind = 4;
+  google.protobuf.Duration deley_duration = 5;
+  google.protobuf.Timestamp sheduled_date = 6;
 }
 
-message Jobs {
-  repeated Job jobs = 1; 
+enum JobKind {
+  IMMEDIATE = 0;
+  SCHEDULED = 1;
+  DELAYED = 2;
 }
 
 message JobResult {
   Job job = 1;
-  enum Status {
-    FAILED = 0;
-    SUCCEEDED = 1;
-  }
-  Status status = 2;
+  JobStatus status = 2;
   string info = 3;
 }
 
-message Void {}
+enum JobStatus {
+  FAILED = 0;
+  SUCCEEDED = 1;
+}
+
+// message GetResultsRequest {
+//   Status status = 1;
+//   Kind kind = 2;
+//   int32 limit = 3;
+//   int32 skip = 4;
+//   string job_name = 5;
+// }
+
+// message GetResultsResponce {
+//   repeated JobResult results = 1;
+// }
+
+// message GetQueuesRequest {
+//   QueueKind kind = 2;
+//   int32 limit = 3;
+//   int32 skip = 4;
+// }
+
+// enum QueueKind {
+//   READY = 0;
+//   SCHEDULED = 1;
+//   DELAYED = 2;
+// }
+
+// message GetQueuesResponce {
+//   repeated Job job = 1;
+// }
+

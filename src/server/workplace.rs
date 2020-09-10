@@ -2,29 +2,30 @@ use futures::{Stream, StreamExt};
 use nanoid::nanoid;
 use std::collections::HashMap;
 use std::pin::Pin;
-use tokio::sync::mpsc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tonic::metadata::MetadataMap;
 use tonic::{Request, Response, Status};
 
 use crate::pb::workplace_server::Workplace;
-use crate::pb::{Job, JobResult, Void};
+use crate::pb::{Job, JobResult};
 
-use crate::archive::{Archive, ArchiveMail};
-use crate::office::{Office, OfficeMail};
+use crate::archive::{Archive, ArchiveCtl};
+use crate::executor::{Executor, ExecutorCtl};
 use crate::worker::Worker;
 
 struct Department {
-    office: Office,
+    executor: Executor,
     archive: Archive,
 }
 
 impl Department {
     fn new() -> Self {
-        let o = Office::new();
-        let a = Archive::new(o.clone());
+        let (executor_tx, executor_rx) = mpsc::channel(10);
+        let (archive_tx, archive_rx) = mpsc::channel(10);
+        let e = Executor::new(executor_rx, archive_tx);
+        let a = Archive::new(archive_rx, executor_tx);
         Department {
-            office: o,
+            executor: e,
             archive: a,
         }
     }
@@ -44,21 +45,18 @@ impl LakhWorkplace {
 
 #[tonic::async_trait]
 impl Workplace for LakhWorkplace {
-    async fn send(
-        &self,
-        request: Request<tonic::Streaming<Job>>,
-    ) -> Result<Response<Void>, Status> {
+    async fn work(&self, request: Request<tonic::Streaming<Job>>) -> Result<Response<()>, Status> {
         let job_names = parse_job_names(request.metadata());
         let mut offices = HashMap::with_capacity(job_names.len());
         let mut guarded_deps = self.departments.lock().await;
 
         for job_name in job_names {
-            let office = guarded_deps
+            let exec = guarded_deps
                 .entry(job_name.clone())
                 .or_insert(Department::new())
-                .office
+                .executor
                 .clone();
-            offices.insert(job_name, office);
+            offices.insert(job_name, exec);
         }
         drop(guarded_deps);
 
@@ -66,51 +64,59 @@ impl Workplace for LakhWorkplace {
         while let Some(job) = job_stream.next().await {
             let job = job?;
             let office = offices.get_mut(&job.name).unwrap();
-            office.send(OfficeMail::WorkOn(job)).await.unwrap();
+            office.send(ExecutorCtl::WorkOn(job)).await.unwrap();
         }
-        Ok(Response::new(Void {}))
+
+        Ok(Response::new(()))
     }
 
-    type WorkStream = Pin<Box<dyn Stream<Item = Result<Job, Status>> + Send + Sync + 'static>>;
+    type JoinStream = Pin<Box<dyn Stream<Item = Result<Job, Status>> + Send + Sync + 'static>>;
 
-    async fn work(
+    async fn join(
         &self,
         job_result: Request<tonic::Streaming<JobResult>>,
-    ) -> Result<Response<Self::WorkStream>, Status> {
+    ) -> Result<Response<Self::JoinStream>, Status> {
         let (tx, rx) = mpsc::channel(10);
         let w = Worker::new(nanoid!(), tx);
 
         let job_names = parse_job_names(job_result.metadata());
         let mut guarded_deps = self.departments.lock().await;
-        let archives = HashMap::with_capacity(job_names.len());
+        let mut archives = HashMap::with_capacity(job_names.len());
 
         for job_name in job_names {
             let dep = guarded_deps
                 .entry(job_name.to_owned())
                 .or_insert(Department::new());
-            dep.office
-                .send(OfficeMail::HireWorker(w.clone()))
+            dep.executor
+                .send(ExecutorCtl::HireWorker(w.clone()))
                 .await
                 .unwrap();
             archives.insert(job_name, dep.archive.clone());
         }
 
         tokio::spawn(async move {
-            let result_stream = job_result.into_inner();
+            let mut result_stream = job_result.into_inner();
             while let Some(job_result) = result_stream.next().await {
                 let job_result = match job_result {
                     Ok(j) => j,
                     Err(_) => break,
                 };
 
+                let job = match job_result.job {
+                    Some(ref j) => j,
+                    None => todo!(),
+                };
+
                 archives
-                    .get(&job_result.job.unwrap().name)
+                    .get_mut(&job.name)
                     .unwrap()
-                    .send(ArchiveMail::AddResult(job_result));
+                    .send(ArchiveCtl::AddResult(job_result))
+                    .await
+                    .unwrap();
             }
         });
 
-        Ok(Response::new(Box::pin(rx) as Self::WorkStream))
+        Ok(Response::new(Box::pin(rx) as Self::JoinStream))
     }
 }
 

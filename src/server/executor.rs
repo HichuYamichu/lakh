@@ -3,65 +3,75 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tonic::Status;
 
-use super::archive::{Archive, ArchiveMail};
+use super::archive::ArchiveToExecMsg;
 use super::worker::{Worker, WorkerId};
-use crate::pb::{job::Kind as JobKind, Job, JobResult};
+use crate::pb::{Job, JobKind, JobResult};
 
 #[derive(Debug)]
-pub enum OfficeMail {
+pub enum ExecutorCtl {
     WorkOn(Job),
     HireWorker(Worker),
     HandleFaliure(WorkerId, Job),
 }
 
-#[derive(Clone)]
-pub struct Office {
-    mail_box: mpsc::Sender<OfficeMail>,
+#[derive(Debug)]
+pub enum ExecToArchiveMsg {
+    AddDead(Job),
 }
 
-impl std::ops::Deref for Office {
-    type Target = mpsc::Sender<OfficeMail>;
+#[derive(Clone)]
+pub struct Executor {
+    tx: mpsc::Sender<ExecutorCtl>,
+}
+
+impl std::ops::Deref for Executor {
+    type Target = mpsc::Sender<ExecutorCtl>;
 
     fn deref(&self) -> &Self::Target {
-        &self.mail_box
+        &self.tx
     }
 }
 
-impl std::ops::DerefMut for Office {
+impl std::ops::DerefMut for Executor {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.mail_box
+        &mut self.tx
     }
 }
 
-impl Office {
-    pub fn new() -> Self {
+impl Executor {
+    pub fn new(
+        from_archive: mpsc::Receiver<ArchiveToExecMsg>,
+        to_archive: mpsc::Sender<ExecToArchiveMsg>,
+    ) -> Self {
         let (tx, mut rx) = mpsc::channel(100);
-        let self_mail = tx.clone();
-        let dep = Self { mail_box: tx };
-
         let mut workers = HashMap::new();
         let mut queue = Vec::new();
 
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Some(mail) = rx.recv() => {
-                        match mail {
-                            OfficeMail::WorkOn(j) => {
+                    Some(ctl) = rx.recv() => {
+                        match ctl {
+                            ExecutorCtl::WorkOn(j) => {
                                 match JobKind::from_i32(j.kind).unwrap() {
                                     JobKind::Immediate => queue.push(j),
                                     JobKind::Scheduled => todo!(),
                                     JobKind::Delayed => todo!(),
-                                }                                ;
+                                };
                             }
-                            OfficeMail::HireWorker(w) => {
+                            ExecutorCtl::HireWorker(w) => {
                                 workers.insert(w.id.clone(), w);
                             }
-                            OfficeMail::HandleFaliure(id, j) => {
+                            ExecutorCtl::HandleFaliure(id, j) => {
                                 queue.push(j);
                                 workers.remove(&id);
                             }
                         };
+                    },
+                    Some(msg) = from_archive.recv() => {
+                        match msg {
+                            ArchiveToExecMsg::Reschedule(j) => todo!()
+                        }
                     },
                     else => break
                 }
@@ -78,6 +88,6 @@ impl Office {
             }
         });
 
-        dep
+        Self { tx }
     }
 }
