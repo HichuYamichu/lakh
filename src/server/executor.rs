@@ -3,20 +3,18 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tonic::Status;
 
-use super::archive::ArchiveToExecMsg;
 use super::worker::{Worker, WorkerId};
 use crate::pb::{Job, JobKind, JobResult};
+
+type JobId = String;
 
 #[derive(Debug)]
 pub enum ExecutorCtl {
     WorkOn(Job),
-    HireWorker(Worker),
-    HandleFaliure(WorkerId, Job),
-}
-
-#[derive(Debug)]
-pub enum ExecToArchiveMsg {
-    AddDead(Job),
+    AddWorker(Worker),
+    HandleWorkerFaliure(WorkerId, Job),
+    HandleJobFaliure(JobId),
+    EvictJob(JobId),
 }
 
 #[derive(Clone)]
@@ -39,50 +37,42 @@ impl std::ops::DerefMut for Executor {
 }
 
 impl Executor {
-    pub fn new(
-        from_archive: mpsc::Receiver<ArchiveToExecMsg>,
-        to_archive: mpsc::Sender<ExecToArchiveMsg>,
-    ) -> Self {
+    pub fn new() -> Self {
         let (tx, mut rx) = mpsc::channel(100);
-        let mut workers = HashMap::new();
-        let mut queue = Vec::new();
+        let inner = Inner::new();
 
         tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    Some(ctl) = rx.recv() => {
-                        match ctl {
-                            ExecutorCtl::WorkOn(j) => {
-                                match JobKind::from_i32(j.kind).unwrap() {
-                                    JobKind::Immediate => queue.push(j),
-                                    JobKind::Scheduled => todo!(),
-                                    JobKind::Delayed => todo!(),
-                                };
-                            }
-                            ExecutorCtl::HireWorker(w) => {
-                                workers.insert(w.id.clone(), w);
-                            }
-                            ExecutorCtl::HandleFaliure(id, j) => {
-                                queue.push(j);
-                                workers.remove(&id);
-                            }
+            let mut workers = HashMap::new();
+            let mut workers_iter = workers.clone().into_iter().map(left);
+            let mut queue = Vec::new();
+
+            while let Some(ctl) = rx.recv().await {
+                match ctl {
+                    ExecutorCtl::WorkOn(j) => {
+                        match JobKind::from_i32(j.kind).unwrap() {
+                            JobKind::Immediate => todo!(),
+                            JobKind::Scheduled => todo!(),
+                            JobKind::Delayed => todo!(),
                         };
-                    },
-                    Some(msg) = from_archive.recv() => {
-                        match msg {
-                            ArchiveToExecMsg::Reschedule(j) => todo!()
-                        }
-                    },
-                    else => break
+                    }
+                    ExecutorCtl::AddWorker(w) => {
+                        workers.insert(w.id.clone(), w);
+                    }
+                    ExecutorCtl::HandleWorkerFaliure(id, j) => {
+                        workers.remove(&id);
+                    }
+                    _ => todo!(),
                 }
 
                 if !workers.is_empty() {
-                    continue;
-                }
-                while !queue.is_empty() {
-                    let amount = std::cmp::min(workers.len(), queue.len());
-                    for (job, worker) in queue.drain(..amount).zip(workers.values_mut()) {
-                        worker.work(job).await.unwrap()
+                    while let Some(job) = queue.pop() {
+                        let mut w = if let Some(w) = workers_iter.next() {
+                            w
+                        } else {
+                            workers_iter = workers.clone().into_iter().map(left);
+                            workers_iter.next().unwrap()
+                        };
+                        w.work(job).await.unwrap();
                     }
                 }
             }
@@ -90,4 +80,27 @@ impl Executor {
 
         Self { tx }
     }
+}
+
+fn left(item: (String, Worker)) -> Worker {
+    item.1
+}
+
+struct Inner {
+    workers: HashMap<String, Worker>,
+    queue: Vec<Job>,
+}
+
+impl Inner {
+    fn new() -> Self {
+        let mut workers = HashMap::new();
+        let mut queue = Vec::new();
+        Self { workers, queue }
+    }
+
+    fn add_worker(&mut self, w: Worker) {
+        self.workers.insert(w.id.clone(), w).unwrap();
+    }
+
+    fn work(&mut self) {}
 }

@@ -7,38 +7,19 @@ use tonic::metadata::MetadataMap;
 use tonic::{Request, Response, Status};
 
 use crate::pb::workplace_server::Workplace;
-use crate::pb::{Job, JobResult};
+use crate::pb::{Job, JobResult, JobStatus};
 
-use crate::archive::{Archive, ArchiveCtl};
 use crate::executor::{Executor, ExecutorCtl};
 use crate::worker::Worker;
 
-struct Department {
-    executor: Executor,
-    archive: Archive,
-}
-
-impl Department {
-    fn new() -> Self {
-        let (executor_tx, executor_rx) = mpsc::channel(10);
-        let (archive_tx, archive_rx) = mpsc::channel(10);
-        let e = Executor::new(executor_rx, archive_tx);
-        let a = Archive::new(archive_rx, executor_tx);
-        Department {
-            executor: e,
-            archive: a,
-        }
-    }
-}
-
 pub struct LakhWorkplace {
-    departments: Mutex<HashMap<String, Department>>,
+    executors: Mutex<HashMap<String, Executor>>,
 }
 
 impl LakhWorkplace {
     pub fn new() -> Self {
         Self {
-            departments: Mutex::new(HashMap::new()),
+            executors: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -47,24 +28,23 @@ impl LakhWorkplace {
 impl Workplace for LakhWorkplace {
     async fn work(&self, request: Request<tonic::Streaming<Job>>) -> Result<Response<()>, Status> {
         let job_names = parse_job_names(request.metadata());
-        let mut offices = HashMap::with_capacity(job_names.len());
-        let mut guarded_deps = self.departments.lock().await;
+        let mut executors = HashMap::with_capacity(job_names.len());
+        let mut guarded_execs = self.executors.lock().await;
 
         for job_name in job_names {
-            let exec = guarded_deps
+            let exec = guarded_execs
                 .entry(job_name.clone())
-                .or_insert(Department::new())
-                .executor
+                .or_insert(Executor::new())
                 .clone();
-            offices.insert(job_name, exec);
+            executors.insert(job_name, exec);
         }
-        drop(guarded_deps);
+        drop(guarded_execs);
 
         let mut job_stream = request.into_inner();
         while let Some(job) = job_stream.next().await {
             let job = job?;
-            let office = offices.get_mut(&job.name).unwrap();
-            office.send(ExecutorCtl::WorkOn(job)).await.unwrap();
+            let executor = executors.get_mut(&job.name).unwrap();
+            executor.send(ExecutorCtl::WorkOn(job)).await.unwrap();
         }
 
         Ok(Response::new(()))
@@ -80,18 +60,16 @@ impl Workplace for LakhWorkplace {
         let w = Worker::new(nanoid!(), tx);
 
         let job_names = parse_job_names(job_result.metadata());
-        let mut guarded_deps = self.departments.lock().await;
-        let mut archives = HashMap::with_capacity(job_names.len());
+        let mut guarded_execs = self.executors.lock().await;
+        let mut executors = HashMap::with_capacity(job_names.len());
 
         for job_name in job_names {
-            let dep = guarded_deps
-                .entry(job_name.to_owned())
-                .or_insert(Department::new());
-            dep.executor
-                .send(ExecutorCtl::HireWorker(w.clone()))
-                .await
-                .unwrap();
-            archives.insert(job_name, dep.archive.clone());
+            let mut exec = guarded_execs
+                .entry(job_name.clone())
+                .or_insert(Executor::new())
+                .clone();
+            exec.send(ExecutorCtl::AddWorker(w.clone())).await.unwrap();
+            executors.insert(job_name, exec);
         }
 
         tokio::spawn(async move {
@@ -102,17 +80,17 @@ impl Workplace for LakhWorkplace {
                     Err(_) => break,
                 };
 
-                let job = match job_result.job {
-                    Some(ref j) => j,
-                    None => todo!(),
-                };
-
-                archives
-                    .get_mut(&job.name)
-                    .unwrap()
-                    .send(ArchiveCtl::AddResult(job_result))
-                    .await
-                    .unwrap();
+                let exec = executors.get_mut(&job_result.job_name).unwrap();
+                match JobStatus::from_i32(job_result.status).unwrap() {
+                    JobStatus::Failed => exec
+                        .send(ExecutorCtl::HandleJobFaliure(job_result.id))
+                        .await
+                        .unwrap(),
+                    JobStatus::Succeeded => exec
+                        .send(ExecutorCtl::EvictJob(job_result.id))
+                        .await
+                        .unwrap(),
+                }
             }
         });
 

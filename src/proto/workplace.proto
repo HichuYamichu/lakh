@@ -10,13 +10,11 @@ import "google/protobuf/timestamp.proto";
 service Workplace {
   rpc Work(stream Job) returns (google.protobuf.Empty) {}
   rpc Join(stream JobResult) returns (stream Job) {}
-  // rpc GetResults(GetResultsRequest) returns (GetResultsResponce) {}
-  // rpc GetQueues(GetQueuesRequest) returns (GetQueuesResponce) {}
 }
 
 
 message Job {
-  int64 id = 1;
+  string id = 1;
   string name = 2;
   repeated string args = 3;
   JobKind kind = 4;
@@ -31,41 +29,12 @@ enum JobKind {
 }
 
 message JobResult {
-  Job job = 1;
-  JobStatus status = 2;
-  string info = 3;
+  string id = 1;
+  string job_name = 2;
+  JobStatus status = 3;
 }
 
 enum JobStatus {
   FAILED = 0;
   SUCCEEDED = 1;
 }
-
-// message GetResultsRequest {
-//   Status status = 1;
-//   Kind kind = 2;
-//   int32 limit = 3;
-//   int32 skip = 4;
-//   string job_name = 5;
-// }
-
-// message GetResultsResponce {
-//   repeated JobResult results = 1;
-// }
-
-// message GetQueuesRequest {
-//   QueueKind kind = 2;
-//   int32 limit = 3;
-//   int32 skip = 4;
-// }
-
-// enum QueueKind {
-//   READY = 0;
-//   SCHEDULED = 1;
-//   DELAYED = 2;
-// }
-
-// message GetQueuesResponce {
-//   repeated Job job = 1;
-// }
-

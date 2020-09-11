@@ -5,7 +5,6 @@ pub mod pb {
 }
 use pb::workplace_server::WorkplaceServer;
 
-mod archive;
 mod executor;
 mod worker;
 mod workplace;
