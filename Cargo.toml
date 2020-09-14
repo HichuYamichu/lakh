@@ -8,6 +8,14 @@ edition = "2018"
 name = "lakh"
 path = "src/server/main.rs"
 
+[[bin]]
+name = "producer"
+path = "src/producer/main.rs"
+
+[[bin]]
+name = "consumer"
+path = "src/consumer/main.rs"
+
 [dependencies]
 tower = "0.3.1"
 tonic= "0.3.0"
@@ -18,6 +26,7 @@ futures = "0.3.5"
 dashmap = "3.11.10"
 async-trait = "0.1.36"
 nanoid = "0.3.0"
+rand = "0.7.3"
 
 [build-dependencies]
 tonic-build = {version = "0.3.0", features = ["prost"]}

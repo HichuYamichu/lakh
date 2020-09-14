@@ -6,10 +6,9 @@ use tokio::sync::{mpsc, Mutex};
 use tonic::metadata::MetadataMap;
 use tonic::{Request, Response, Status};
 
+use crate::executor::{Executor, ExecutorCtl};
 use crate::pb::workplace_server::Workplace;
 use crate::pb::{Job, JobResult, JobStatus};
-
-use crate::executor::{Executor, ExecutorCtl};
 use crate::worker::Worker;
 
 pub struct LakhWorkplace {
@@ -80,14 +79,14 @@ impl Workplace for LakhWorkplace {
                     Err(_) => break,
                 };
 
-                let exec = executors.get_mut(&job_result.job_name).unwrap();
+                let job = job_result.job.unwrap();
+                let exec = executors.get_mut(&job.name).unwrap();
                 match JobStatus::from_i32(job_result.status).unwrap() {
-                    JobStatus::Failed => exec
-                        .send(ExecutorCtl::HandleJobFaliure(job_result.id))
-                        .await
-                        .unwrap(),
+                    JobStatus::Failed => {
+                        exec.send(ExecutorCtl::HandleJobFaliure(job)).await.unwrap()
+                    }
                     JobStatus::Succeeded => exec
-                        .send(ExecutorCtl::EvictJob(job_result.id))
+                        .send(ExecutorCtl::ForgetTryCount(job.id))
                         .await
                         .unwrap(),
                 }

@@ -29,9 +29,8 @@ enum JobKind {
 }
 
 message JobResult {
-  string id = 1;
-  string job_name = 2;
-  JobStatus status = 3;
+  Job job = 1;
+  JobStatus status = 2;
 }
 
 enum JobStatus {
