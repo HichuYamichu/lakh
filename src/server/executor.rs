@@ -1,13 +1,11 @@
-use futures::Stream;
-use rand::Rng;
+use rand::seq::IteratorRandom;
 use std::collections::HashMap;
-use std::time::Duration;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc;
-use tokio::time::delay_for;
-use tonic::Status;
 
-use super::worker::{Worker, WorkerId};
-use crate::pb::{Job, JobKind, JobResult};
+use crate::pb::Job;
+use crate::task::{FailReason, Task, TaskCtl};
+use crate::worker::{Worker, WorkerId};
 
 type JobId = String;
 
@@ -15,9 +13,11 @@ type JobId = String;
 pub enum ExecutorCtl {
     WorkOn(Job),
     AddWorker(Worker),
-    HandleWorkerFaliure(WorkerId, Job),
-    HandleJobFaliure(Job),
-    ForgetTryCount(JobId),
+    RemoveWorker(WorkerId),
+    ProvideWorker(mpsc::Sender<Worker>),
+    HandleJobSuccess(JobId),
+    HandleJobFaliure(JobId),
+    HandleDyingJob(Job, FailReason),
 }
 
 #[derive(Clone)]
@@ -43,63 +43,57 @@ impl Executor {
     pub fn new() -> Self {
         let (tx, mut rx) = mpsc::channel(100);
         let tx_clone = tx.clone();
+
         tokio::spawn(async move {
             let mut workers = HashMap::new();
-            let mut workers_iter = workers.clone().into_iter().map(left);
-            let mut queue = Vec::new();
-            let mut run_count: HashMap<_, u32> = HashMap::new();
-            let (delay_tx, mut delay_rx) = mpsc::channel(10);
+            let mut tasks = HashMap::new();
+            let mut dead_jobs = Vec::new();
+            let (starved_tasks_tx, _) = broadcast::channel(10);
 
-            loop {
-                tokio::select! {
-                    Some(ctl) = rx.recv() => {
-                        match ctl {
-                            ExecutorCtl::WorkOn(j) => {
-                                match JobKind::from_i32(j.kind).unwrap() {
-                                    JobKind::Immediate => queue.push(j),
-                                    JobKind::Scheduled => todo!(),
-                                    JobKind::Delayed => {
-                                        let dur = Duration::from_secs(j.deley_duration.clone().unwrap().seconds as u64);
-                                        make_delay(delay_tx.clone(), dur, j);
-                                    },
-                                };
-                            }
-                            ExecutorCtl::AddWorker(w) => {
-                                workers.insert(w.id.clone(), w);
-                            }
-                            ExecutorCtl::HandleWorkerFaliure(id, j) => {
-                                workers.remove(&id);
-                                queue.push(j);
-                            }
-                            ExecutorCtl::HandleJobFaliure(j) => {
-                                let count = run_count.get(&j.id).unwrap() + 1;
-                                let r: u32 = rand::thread_rng().gen_range(0, 30);
-                                let dur = 15 + count ^ 4 + (r * (count + 1));
-                                let dur = Duration::from_secs(dur as u64);
-                                make_delay(delay_tx.clone(), dur, j);
-                            }
-                            ExecutorCtl::ForgetTryCount(ref id) => {
-                                run_count.remove(id);
+            while let Some(ctl) = rx.recv().await {
+                match ctl {
+                    ExecutorCtl::WorkOn(j) => {
+                        let key = j.id.clone();
+                        let task = Task::new(j, tx_clone.clone());
+                        tasks.insert(key, task);
+                    }
+                    ExecutorCtl::AddWorker(w) => {
+                        workers.insert(w.id.clone(), w.clone());
+                        // if this is our first worker we might have a bunch of
+                        // starved tasks so we broadcast it to everyone interested
+                        if workers.len() == 1 {
+                            let _ = starved_tasks_tx.send(w);
+                        }
+                    }
+                    ExecutorCtl::RemoveWorker(ref id) => {
+                        workers.remove(id);
+                    }
+                    ExecutorCtl::HandleJobSuccess(ref id) => {
+                        if let Some(mut task) = tasks.remove(id) {
+                            task.send(TaskCtl::Terminate).await.unwrap();
+                        }
+                    }
+                    ExecutorCtl::HandleJobFaliure(ref id) => {
+                        if let Some(task) = tasks.get_mut(id) {
+                            task.send(TaskCtl::Retry).await.unwrap();
+                        }
+                    }
+                    ExecutorCtl::HandleDyingJob(j, _) => {
+                        dead_jobs.push(j);
+                    }
+                    ExecutorCtl::ProvideWorker(mut tx) => {
+                        let w = workers.values().choose(&mut rand::thread_rng());
+                        match w {
+                            Some(w) => tx.send(w.clone()).await.unwrap(),
+                            None => {
+                                let starved_tasks_tx = starved_tasks_tx.clone();
+                                tokio::spawn(async move {
+                                    let mut rx = starved_tasks_tx.subscribe();
+                                    // TODO: don't feed all tasks at once to prevent "thundering herd"
+                                    tx.send(rx.recv().await.unwrap()).await.unwrap();
+                                });
                             }
                         }
-
-                    },
-                    Some(j) = delay_rx.recv() => {
-                        queue.push(j)
-                    },
-                    else => break
-                }
-
-                if !workers.is_empty() {
-                    while let Some(job) = queue.pop() {
-                        let mut w = if let Some(w) = workers_iter.next() {
-                            w
-                        } else {
-                            workers_iter = workers.clone().into_iter().map(left);
-                            workers_iter.next().unwrap()
-                        };
-                        run_count.insert(job.id.clone(), 1);
-                        w.work(job, tx_clone.clone()).await;
                     }
                 }
             }
@@ -107,15 +101,4 @@ impl Executor {
 
         Self { tx }
     }
-}
-
-fn left(item: (String, Worker)) -> Worker {
-    item.1
-}
-
-fn make_delay(mut tx: mpsc::Sender<Job>, dur: Duration, job: Job) {
-    tokio::spawn(async move {
-        delay_for(dur).await;
-        tx.send(job);
-    });
 }

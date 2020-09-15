@@ -6,6 +6,7 @@ pub mod pb {
 use pb::workplace_server::WorkplaceServer;
 
 mod executor;
+mod task;
 mod worker;
 mod workplace;
 
@@ -16,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50051".parse().unwrap();
     let w = LakhWorkplace::new();
 
-    println!("GreeterServer listening on {}", addr);
+    println!("Lakh server listening on {}", addr);
 
     Server::builder()
         .add_service(WorkplaceServer::new(w))

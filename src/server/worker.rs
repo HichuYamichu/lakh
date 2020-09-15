@@ -1,7 +1,7 @@
 use tokio::sync::mpsc;
-use tonic::{Code, Status};
+use tokio::sync::mpsc::error::SendError;
+use tonic::Status;
 
-use crate::executor::ExecutorCtl;
 use crate::pb::Job;
 pub type WorkerId = String;
 
@@ -16,12 +16,7 @@ impl Worker {
         Self { id, inner }
     }
 
-    pub async fn work(&mut self, j: Job, mut to_exec: mpsc::Sender<ExecutorCtl>) {
-        if let Err(e) = self.inner.send(Ok(j)).await {
-            to_exec
-                .send(ExecutorCtl::HandleWorkerFaliure(self.id.clone(), e.0.unwrap()))
-                .await
-                .unwrap();
-        }
+    pub async fn work(&mut self, j: Job) -> Result<(), SendError<Result<Job, Status>>> {
+        self.inner.send(Ok(j)).await
     }
 }

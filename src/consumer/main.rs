@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (mut tx, rx) = mpsc::channel(10);
     let mut req = Request::new(rx);
     req.metadata_mut()
-        .insert("job_names", MetadataValue::from_static("add"));
+        .insert("job_names", MetadataValue::from_static("add;sub"));
 
     let res = client.join(req).await?;
     let mut inbound = res.into_inner();
@@ -32,7 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let f = jobs.get(job.name.as_str()).unwrap();
         f(job.args.clone());
         tx.send(JobResult {
-            job: Some(job),
+            job_id: job.id,
+            job_name: job.name,
             status: JobStatus::Succeeded.into(),
         })
         .await?
@@ -52,5 +53,5 @@ fn sub(args: Vec<String>) {
     let a = args[0].parse::<i32>().unwrap();
     let b = args[1].parse::<i32>().unwrap();
     let res = a - b;
-    println!("add result: {}", res);
+    println!("sub result: {}", res);
 }

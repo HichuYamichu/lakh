@@ -17,6 +17,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args: vec!["1".into(), "1".into()],
         deley_duration: None,
         sheduled_date: None,
+        reservation_period: Some(prost_types::Duration {
+            seconds: 10,
+            nanos: 0,
+        }),
         kind: JobKind::Immediate.into(),
     };
     let job2 = Job {
@@ -28,6 +32,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             nanos: 0,
         }),
         sheduled_date: None,
+        reservation_period: Some(prost_types::Duration {
+            seconds: 10,
+            nanos: 0,
+        }),
         kind: JobKind::Delayed.into(),
     };
 

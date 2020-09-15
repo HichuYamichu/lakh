@@ -59,8 +59,8 @@ impl Workplace for LakhWorkplace {
         let w = Worker::new(nanoid!(), tx);
 
         let job_names = parse_job_names(job_result.metadata());
-        let mut guarded_execs = self.executors.lock().await;
         let mut executors = HashMap::with_capacity(job_names.len());
+        let mut guarded_execs = self.executors.lock().await;
 
         for job_name in job_names {
             let mut exec = guarded_execs
@@ -79,14 +79,14 @@ impl Workplace for LakhWorkplace {
                     Err(_) => break,
                 };
 
-                let job = job_result.job.unwrap();
-                let exec = executors.get_mut(&job.name).unwrap();
+                let exec = executors.get_mut(&job_result.job_name).unwrap();
                 match JobStatus::from_i32(job_result.status).unwrap() {
-                    JobStatus::Failed => {
-                        exec.send(ExecutorCtl::HandleJobFaliure(job)).await.unwrap()
-                    }
+                    JobStatus::Failed => exec
+                        .send(ExecutorCtl::HandleJobFaliure(job_result.job_id))
+                        .await
+                        .unwrap(),
                     JobStatus::Succeeded => exec
-                        .send(ExecutorCtl::ForgetTryCount(job.id))
+                        .send(ExecutorCtl::HandleJobSuccess(job_result.job_id))
                         .await
                         .unwrap(),
                 }
