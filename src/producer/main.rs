@@ -1,13 +1,15 @@
 use futures::stream;
 use nanoid::nanoid;
+use std::time::{Duration, SystemTime};
 use tonic::metadata::MetadataValue;
 use tonic::Request;
 pub mod pb {
-    tonic::include_proto!("workplace");
+    tonic::include_proto!("lakh");
 }
 
-use pb::workplace_client::WorkplaceClient;
-use pb::{Job, JobKind};
+use pb::job::ExecutionTime;
+use pb::lakh_client::LakhClient;
+use pb::Job;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,32 +17,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         id: nanoid!(),
         name: "add".into(),
         args: vec!["1".into(), "1".into()],
-        deley_duration: None,
-        sheduled_date: None,
-        reservation_period: Some(prost_types::Duration {
+        execution_time: Some(ExecutionTime::Immediate(())),
+        reservation_time: Some(prost_types::Duration {
             seconds: 10,
             nanos: 0,
         }),
-        kind: JobKind::Immediate.into(),
     };
     let job2 = Job {
         id: nanoid!(),
         name: "sub".into(),
         args: vec!["1".into(), "1".into()],
-        deley_duration: Some(prost_types::Duration {
+        execution_time: Some(ExecutionTime::Delayed(prost_types::Duration {
             seconds: 5,
             nanos: 0,
-        }),
-        sheduled_date: None,
-        reservation_period: Some(prost_types::Duration {
-            seconds: 10,
-            nanos: 0,
-        }),
-        kind: JobKind::Delayed.into(),
+        })),
+        reservation_time: None,
     };
 
-    let mut client = WorkplaceClient::connect("http://[::1]:50051").await?;
-    let mut req = Request::new(stream::iter(vec![job1, job2]));
+    // create timestamp 10s into the future
+    let system_duration_since_epoch = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap();
+    let dur = Duration::from_secs(10);
+    let timestamp = prost_types::Timestamp {
+        seconds: (system_duration_since_epoch + dur).as_secs() as i64,
+        nanos: 0,
+    };
+
+    let job3 = Job {
+        id: nanoid!(),
+        name: "sub".into(),
+        args: vec!["2".into(), "2".into()],
+        execution_time: Some(ExecutionTime::Scheduled(timestamp)),
+        reservation_time: Some(prost_types::Duration {
+            seconds: 20,
+            nanos: 0,
+        }),
+    };
+
+    let mut client = LakhClient::connect("http://[::1]:50051").await?;
+    let mut req = Request::new(stream::iter(vec![job1, job2, job3]));
     req.metadata_mut()
         .insert("job_names", MetadataValue::from_static("add;sub"));
 

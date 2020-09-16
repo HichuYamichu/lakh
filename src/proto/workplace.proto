@@ -1,12 +1,12 @@
 syntax = "proto3";
 
-package workplace;
+package lakh;
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
-service Workplace {
+service Lakh {
   rpc Work(stream Job) returns (google.protobuf.Empty) {}
   rpc Join(stream JobResult) returns (stream Job) {}
 }
@@ -15,10 +15,12 @@ message Job {
   string id = 1;
   string name = 2;
   repeated string args = 3;
-  JobKind kind = 4;
-  google.protobuf.Duration deley_duration = 5;
-  google.protobuf.Timestamp sheduled_date = 6;
-  google.protobuf.Duration reservation_period = 7;
+  oneof execution_time {
+    google.protobuf.Duration delayed = 4;
+    google.protobuf.Timestamp scheduled = 5;
+    google.protobuf.Empty immediate = 6;
+  }
+  google.protobuf.Duration reservation_time = 7;
 }
 
 enum JobKind {

@@ -1,26 +1,23 @@
 use tonic::transport::Server;
 
 pub mod pb {
-    tonic::include_proto!("workplace");
+    tonic::include_proto!("lakh");
 }
-use pb::workplace_server::WorkplaceServer;
+use pb::lakh_server::LakhServer;
 
 mod executor;
+mod manager;
 mod task;
 mod worker;
-mod workplace;
 
-use workplace::LakhWorkplace;
+use manager::Manager;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50051".parse().unwrap();
-    let w = LakhWorkplace::new();
-
     println!("Lakh server listening on {}", addr);
-
     Server::builder()
-        .add_service(WorkplaceServer::new(w))
+        .add_service(LakhServer::new(Manager::new()))
         .serve(addr)
         .await?;
 

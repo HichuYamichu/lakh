@@ -4,21 +4,22 @@ use tonic::metadata::MetadataValue;
 use tonic::Request;
 
 pub mod pb {
-    tonic::include_proto!("workplace");
+    tonic::include_proto!("lakh");
 }
 
-use pb::workplace_client::WorkplaceClient;
+use pb::lakh_client::LakhClient;
 use pb::{JobResult, JobStatus};
 
 type JobHandler = fn(Vec<String>);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // job handlers resolution is up to you
     let mut jobs = HashMap::new();
     jobs.insert("add", add as JobHandler);
     jobs.insert("sub", sub as JobHandler);
 
-    let mut client = WorkplaceClient::connect("http://[::1]:50051").await?;
+    let mut client = LakhClient::connect("http://[::1]:50051").await?;
 
     let (mut tx, rx) = mpsc::channel(10);
     let mut req = Request::new(rx);
@@ -29,8 +30,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut inbound = res.into_inner();
 
     while let Some(job) = inbound.message().await? {
-        let f = jobs.get(job.name.as_str()).unwrap();
-        f(job.args.clone());
+        let handler = jobs.get(job.name.as_str()).unwrap();
+        handler(job.args.clone());
+        // realistically job handlers should return `Result`
+        // and returned status should be based on that
         tx.send(JobResult {
             job_id: job.id,
             job_name: job.name,

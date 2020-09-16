@@ -69,13 +69,17 @@ impl Executor {
                         workers.remove(id);
                     }
                     ExecutorCtl::HandleJobSuccess(ref id) => {
+                        // someone else might have already reported completion
                         if let Some(mut task) = tasks.remove(id) {
-                            task.send(TaskCtl::Terminate).await.unwrap();
+                            // if job had no reservation task already exited
+                            // and this send will fail
+                            let _ = task.send(TaskCtl::Terminate).await;
                         }
                     }
                     ExecutorCtl::HandleJobFaliure(ref id) => {
+                        // above applies here as well
                         if let Some(task) = tasks.get_mut(id) {
-                            task.send(TaskCtl::Retry).await.unwrap();
+                            let _ = task.send(TaskCtl::Retry).await;
                         }
                     }
                     ExecutorCtl::HandleDyingJob(j, _) => {

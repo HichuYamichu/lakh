@@ -7,15 +7,15 @@ use tonic::metadata::MetadataMap;
 use tonic::{Request, Response, Status};
 
 use crate::executor::{Executor, ExecutorCtl};
-use crate::pb::workplace_server::Workplace;
+use crate::pb::lakh_server::Lakh;
 use crate::pb::{Job, JobResult, JobStatus};
 use crate::worker::Worker;
 
-pub struct LakhWorkplace {
+pub struct Manager {
     executors: Mutex<HashMap<String, Executor>>,
 }
 
-impl LakhWorkplace {
+impl Manager {
     pub fn new() -> Self {
         Self {
             executors: Mutex::new(HashMap::new()),
@@ -24,7 +24,7 @@ impl LakhWorkplace {
 }
 
 #[tonic::async_trait]
-impl Workplace for LakhWorkplace {
+impl Lakh for Manager {
     async fn work(&self, request: Request<tonic::Streaming<Job>>) -> Result<Response<()>, Status> {
         let job_names = parse_job_names(request.metadata());
         let mut executors = HashMap::with_capacity(job_names.len());
@@ -33,7 +33,7 @@ impl Workplace for LakhWorkplace {
         for job_name in job_names {
             let exec = guarded_execs
                 .entry(job_name.clone())
-                .or_insert(Executor::new())
+                .or_insert_with(Executor::new)
                 .clone();
             executors.insert(job_name, exec);
         }
@@ -65,7 +65,7 @@ impl Workplace for LakhWorkplace {
         for job_name in job_names {
             let mut exec = guarded_execs
                 .entry(job_name.clone())
-                .or_insert(Executor::new())
+                .or_insert_with(Executor::new)
                 .clone();
             exec.send(ExecutorCtl::AddWorker(w.clone())).await.unwrap();
             executors.insert(job_name, exec);
@@ -102,7 +102,7 @@ fn parse_job_names(meta: &MetadataMap) -> Vec<String> {
         .unwrap()
         .to_str()
         .unwrap()
-        .split(";")
+        .split(';')
         .map(|s| s.to_owned())
         .collect()
 }

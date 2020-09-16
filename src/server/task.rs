@@ -1,10 +1,11 @@
 use rand::Rng;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tokio::time::delay_for;
 
 use crate::executor::ExecutorCtl;
-use crate::pb::{Job, JobKind};
+use crate::pb::job::ExecutionTime;
+use crate::pb::Job;
 
 const MAX_RETRY: u8 = 30;
 
@@ -50,23 +51,31 @@ impl Task {
                     break Err(FailReason::MaxRetryReached);
                 };
 
-                let dur = match JobKind::from_i32(job.kind).unwrap() {
-                    JobKind::Immediate => None,
-                    JobKind::Scheduled => todo!(),
-                    JobKind::Delayed => Some(Duration::from_secs(
-                        job.deley_duration.clone().unwrap().seconds as u64,
-                    )),
+                let wait_dur = match job.execution_time.clone() {
+                    Some(ex_time) => match ex_time {
+                        ExecutionTime::Immediate(_) => Duration::new(0, 0),
+                        ExecutionTime::Scheduled(timestamp) => {
+                            let duration_since_epoch =
+                                Duration::new(timestamp.seconds as u64, timestamp.nanos as u32);
+                            let system_duration_since_epoch = SystemTime::now()
+                                .duration_since(SystemTime::UNIX_EPOCH)
+                                .unwrap();
+                            duration_since_epoch - system_duration_since_epoch
+                        }
+                        ExecutionTime::Delayed(dur) => {
+                            Duration::new(dur.seconds as u64, dur.nanos as u32)
+                        }
+                    },
+                    None => Duration::new(0, 0),
                 };
 
-                if let Some(dur) = dur {
-                    let mut delay = delay_for(dur);
-                    loop {
-                        tokio::select! {
-                            _ = &mut delay => break,
-                            Some(ctl) = rx.recv() => {
-                                match ctl {
-                                    _ => { /* hadle status queries in the future */ },
-                                }
+                let mut delay = delay_for(wait_dur);
+                loop {
+                    tokio::select! {
+                        _ = &mut delay => break,
+                        Some(ctl) = rx.recv() => {
+                            match ctl {
+                                _ => { /* hadle status queries in the future */ },
                             }
                         }
                     }
@@ -79,16 +88,16 @@ impl Task {
                     .unwrap();
                 let mut w = worker_rx.recv().await.unwrap();
 
-                if let Err(_) = w.work(job.clone()).await {
+                if w.work(job.clone()).await.is_err() {
                     to_exec.send(ExecutorCtl::RemoveWorker(w.id)).await.unwrap();
-                    job.kind = JobKind::Immediate.into();
+                    job.execution_time = Some(ExecutionTime::Immediate(()));
                     continue;
                 };
                 // inc try_count only after job was successfully sent to a worker
                 // worker unavailability doesn't count as job failure
                 try_count += 1;
 
-                let reservation_period = match job.reservation_period.clone() {
+                let reservation_time = match &job.reservation_time {
                     Some(t) => t,
                     None => {
                         // if job has no reservation time we won't wait for it's status
@@ -97,7 +106,7 @@ impl Task {
                     }
                 };
 
-                let dur = Duration::from_secs(reservation_period.seconds as u64);
+                let dur = Duration::from_secs(reservation_time.seconds as u64);
                 let mut delay = delay_for(dur);
 
                 tokio::select! {
@@ -131,10 +140,10 @@ fn expand_delay(job: &mut Job, try_count: u8) {
     // see https://github.com/contribsys/faktory/wiki/Job-Errors
 
     let r: u8 = rand::thread_rng().gen_range(0, 30);
-    let seconds = 15 + try_count ^ 4 + (r * (try_count + 1));
-    job.deley_duration = Some(prost_types::Duration {
+    let seconds = 15 + (try_count ^ 4) + (r * (try_count + 1));
+    let delay = prost_types::Duration {
         seconds: seconds as i64,
         nanos: 0,
-    });
-    job.kind = JobKind::Delayed.into();
+    };
+    job.execution_time = Some(ExecutionTime::Delayed(delay));
 }
