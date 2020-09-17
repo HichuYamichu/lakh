@@ -27,6 +27,11 @@ impl Manager {
 impl Lakh for Manager {
     async fn work(&self, request: Request<tonic::Streaming<Job>>) -> Result<Response<()>, Status> {
         let job_names = parse_job_names(request.metadata());
+        let job_names = match job_names {
+            Ok(names) => names,
+            Err(e) => return Err(Status::invalid_argument(e.to_string())),
+        };
+
         let mut executors = HashMap::with_capacity(job_names.len());
         let mut guarded_execs = self.executors.lock().await;
 
@@ -42,8 +47,9 @@ impl Lakh for Manager {
         let mut job_stream = request.into_inner();
         while let Some(job) = job_stream.next().await {
             let job = job?;
-            let executor = executors.get_mut(&job.name).unwrap();
-            executor.send(ExecutorCtl::WorkOn(job)).await.unwrap();
+            if let Some(exec) = executors.get_mut(&job.name) {
+                exec.send(ExecutorCtl::WorkOn(job)).await.unwrap();
+            }
         }
 
         Ok(Response::new(()))
@@ -55,10 +61,14 @@ impl Lakh for Manager {
         &self,
         job_result: Request<tonic::Streaming<JobResult>>,
     ) -> Result<Response<Self::JoinStream>, Status> {
+        let job_names = parse_job_names(job_result.metadata());
+        let job_names = match job_names {
+            Ok(names) => names,
+            Err(e) => return Err(Status::invalid_argument(e.to_string())),
+        };
+
         let (tx, rx) = mpsc::channel(10);
         let w = Worker::new(nanoid!(), tx);
-
-        let job_names = parse_job_names(job_result.metadata());
         let mut executors = HashMap::with_capacity(job_names.len());
         let mut guarded_execs = self.executors.lock().await;
 
@@ -79,16 +89,17 @@ impl Lakh for Manager {
                     Err(_) => break,
                 };
 
-                let exec = executors.get_mut(&job_result.job_name).unwrap();
-                match JobStatus::from_i32(job_result.status).unwrap() {
-                    JobStatus::Failed => exec
-                        .send(ExecutorCtl::HandleJobFaliure(job_result.job_id))
-                        .await
-                        .unwrap(),
-                    JobStatus::Succeeded => exec
-                        .send(ExecutorCtl::HandleJobSuccess(job_result.job_id))
-                        .await
-                        .unwrap(),
+                if let Some(exec) = executors.get_mut(&job_result.job_name) {
+                    match JobStatus::from_i32(job_result.status).unwrap() {
+                        JobStatus::Failed => exec
+                            .send(ExecutorCtl::HandleJobFaliure(job_result.job_id))
+                            .await
+                            .unwrap(),
+                        JobStatus::Succeeded => exec
+                            .send(ExecutorCtl::HandleJobSuccess(job_result.job_id))
+                            .await
+                            .unwrap(),
+                    }
                 }
             }
         });
@@ -97,12 +108,31 @@ impl Lakh for Manager {
     }
 }
 
-fn parse_job_names(meta: &MetadataMap) -> Vec<String> {
-    meta.get("job_names")
-        .unwrap()
+#[derive(Debug)]
+enum ParseJobNamesError {
+    MissingField,
+    InvalidASCII,
+}
+
+impl std::fmt::Display for ParseJobNamesError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ParseJobNamesError::MissingField => {
+                write!(f, "missing `job_names` field in metadata map")
+            }
+            ParseJobNamesError::InvalidASCII => write!(f, "invalid ASCII in `job_names` field"),
+        }
+    }
+}
+
+fn parse_job_names(meta: &MetadataMap) -> Result<Vec<String>, ParseJobNamesError> {
+    let res = meta
+        .get("job_names")
+        .ok_or(ParseJobNamesError::MissingField)?
         .to_str()
-        .unwrap()
+        .map_err(|_| ParseJobNamesError::InvalidASCII)?
         .split(';')
         .map(|s| s.to_owned())
-        .collect()
+        .collect();
+    Ok(res)
 }
