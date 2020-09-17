@@ -51,7 +51,7 @@ impl Task {
                     break Err(FailReason::MaxRetryReached);
                 };
 
-                let wait_dur = match job.execution_time.clone() {
+                let wait_dur = match &job.execution_time {
                     Some(ex_time) => match ex_time {
                         ExecutionTime::Immediate(_) => Duration::new(0, 0),
                         ExecutionTime::Scheduled(timestamp) => {

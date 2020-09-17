@@ -90,9 +90,8 @@ impl Executor {
                         match w {
                             Some(w) => tx.send(w.clone()).await.unwrap(),
                             None => {
-                                let starved_tasks_tx = starved_tasks_tx.clone();
+                                let mut rx = starved_tasks_tx.subscribe();
                                 tokio::spawn(async move {
-                                    let mut rx = starved_tasks_tx.subscribe();
                                     // TODO: don't feed all tasks at once to prevent "thundering herd"
                                     tx.send(rx.recv().await.unwrap()).await.unwrap();
                                 });
