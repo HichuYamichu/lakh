@@ -1,3 +1,3 @@
 fn main() {
-    tonic_build::compile_protos("src/proto/workplace.proto").unwrap();
+    tonic_build::compile_protos("src/proto/lakh.proto").unwrap();
 }
