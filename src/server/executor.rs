@@ -1,7 +1,8 @@
 use rand::seq::IteratorRandom;
 use std::collections::HashMap;
-use tokio::sync::broadcast;
-use tokio::sync::mpsc;
+use std::time::Duration;
+use tokio::sync::{broadcast, mpsc};
+use tokio::time::delay_for;
 
 use crate::pb::Job;
 use crate::task::{FailReason, Task, TaskCtl};
@@ -71,7 +72,7 @@ impl Executor {
                     ExecutorCtl::HandleJobSuccess(ref id) => {
                         // someone else might have already reported completion
                         if let Some(mut task) = tasks.remove(id) {
-                            // if job had no reservation task already exited
+                            // if job had no reservation this task has already exited
                             // and this send will fail
                             let _ = task.send(TaskCtl::Terminate).await;
                         }
@@ -91,9 +92,13 @@ impl Executor {
                             Some(w) => tx.send(w.clone()).await.unwrap(),
                             None => {
                                 let mut rx = starved_tasks_tx.subscribe();
+                                let starved_count = starved_tasks_tx.receiver_count();
                                 tokio::spawn(async move {
-                                    // TODO: don't feed all tasks at once to prevent "thundering herd"
-                                    tx.send(rx.recv().await.unwrap()).await.unwrap();
+                                    let w = rx.recv().await.unwrap();
+                                    // don't feed all tasks at once to prevent "thundering herd"
+                                    let delay = 100 * (starved_count as u64 - 1);
+                                    delay_for(Duration::from_millis(delay)).await;
+                                    tx.send(w).await.unwrap();
                                 });
                             }
                         }
