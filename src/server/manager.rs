@@ -29,7 +29,7 @@ impl Lakh for Manager {
         let job_names = parse_job_names(request.metadata());
         let job_names = match job_names {
             Ok(names) => names,
-            Err(e) => return Err(Status::invalid_argument(e.to_string())),
+            Err(e) => return Err(Status::invalid_argument(e)),
         };
 
         let mut executors = HashMap::with_capacity(job_names.len());
@@ -64,7 +64,7 @@ impl Lakh for Manager {
         let job_names = parse_job_names(job_result.metadata());
         let job_names = match job_names {
             Ok(names) => names,
-            Err(e) => return Err(Status::invalid_argument(e.to_string())),
+            Err(e) => return Err(Status::invalid_argument(e)),
         };
 
         let (tx, rx) = mpsc::channel(10);
@@ -122,6 +122,12 @@ impl std::fmt::Display for ParseJobNamesError {
             }
             ParseJobNamesError::InvalidASCII => write!(f, "invalid ASCII in `job_names` field"),
         }
+    }
+}
+
+impl Into<String> for ParseJobNamesError {
+    fn into(self) -> String {
+        self.to_string()
     }
 }
 
