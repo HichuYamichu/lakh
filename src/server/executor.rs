@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::delay_for;
+use tracing::{info, instrument, warn};
+use tracing_futures::Instrument;
 
 use crate::pb::Job;
 use crate::task::{FailReason, Task, TaskCtl};
@@ -21,7 +23,7 @@ pub enum ExecutorCtl {
     HandleDyingJob(Job, FailReason),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Executor {
     tx: mpsc::Sender<ExecutorCtl>,
 }
@@ -41,11 +43,13 @@ impl std::ops::DerefMut for Executor {
 }
 
 impl Executor {
-    pub fn new() -> Self {
+    #[instrument(name = "executor")]
+    pub fn new(job_name: String) -> Self {
         let (tx, mut rx) = mpsc::channel(100);
         let tx_clone = tx.clone();
 
-        tokio::spawn(async move {
+        info!(message = "created", %job_name);
+        let exec = async move {
             let mut workers = HashMap::new();
             let mut tasks = HashMap::new();
             let mut dead_jobs = Vec::new();
@@ -60,6 +64,7 @@ impl Executor {
                     }
                     ExecutorCtl::AddWorker(w) => {
                         workers.insert(w.id.clone(), w.clone());
+                        info!(message = "worker added", id = %w.id, %job_name);
                         // if this is our first worker we might have a bunch of
                         // starved tasks so we broadcast it to everyone interested
                         if workers.len() == 1 {
@@ -68,10 +73,12 @@ impl Executor {
                     }
                     ExecutorCtl::RemoveWorker(ref id) => {
                         workers.remove(id);
+                        info!(message = "worker removed", %id, %job_name);
                     }
                     ExecutorCtl::HandleJobSuccess(ref id) => {
                         // someone else might have already reported completion
                         if let Some(mut task) = tasks.remove(id) {
+                            info!(message = "task removed", %id, %job_name);
                             // if job had no reservation this task has already exited
                             // and this send will fail
                             let _ = task.send(TaskCtl::Terminate).await;
@@ -93,19 +100,22 @@ impl Executor {
                             None => {
                                 let mut rx = starved_tasks_tx.subscribe();
                                 let starved_count = starved_tasks_tx.receiver_count();
-                                tokio::spawn(async move {
+                                let feeder = async move {
                                     let w = rx.recv().await.unwrap();
                                     // don't feed all tasks at once to prevent "thundering herd"
                                     let delay = 100 * (starved_count as u64 - 1);
                                     delay_for(Duration::from_millis(delay)).await;
                                     tx.send(w).await.unwrap();
-                                });
+                                };
+                                tokio::spawn(feeder.instrument(tracing::info_span!("feeder")));
+                                warn!(%job_name, "starving {} tasks", starved_count);
                             }
                         }
                     }
                 }
             }
-        });
+        };
+        tokio::spawn(exec.in_current_span());
 
         Self { tx }
     }

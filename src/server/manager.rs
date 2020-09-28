@@ -5,12 +5,15 @@ use std::pin::Pin;
 use tokio::sync::{mpsc, Mutex};
 use tonic::metadata::MetadataMap;
 use tonic::{Request, Response, Status};
+use tracing::{instrument, warn};
+use tracing_futures::Instrument;
 
 use crate::executor::{Executor, ExecutorCtl};
 use crate::pb::lakh_server::Lakh;
 use crate::pb::{Job, JobResult, JobStatus};
 use crate::worker::Worker;
 
+#[derive(Debug)]
 pub struct Manager {
     executors: Mutex<HashMap<String, Executor>>,
 }
@@ -25,6 +28,7 @@ impl Manager {
 
 #[tonic::async_trait]
 impl Lakh for Manager {
+    #[instrument(name = "producer", err)]
     async fn work(&self, request: Request<tonic::Streaming<Job>>) -> Result<Response<()>, Status> {
         let job_names = parse_job_names(request.metadata());
         let job_names = match job_names {
@@ -38,7 +42,7 @@ impl Lakh for Manager {
         for job_name in job_names {
             let exec = guarded_execs
                 .entry(job_name.clone())
-                .or_insert_with(Executor::new)
+                .or_insert_with(|| Executor::new(job_name.clone()))
                 .clone();
             executors.insert(job_name, exec);
         }
@@ -47,8 +51,13 @@ impl Lakh for Manager {
         let mut job_stream = request.into_inner();
         while let Some(job) = job_stream.next().await {
             let job = job?;
-            if let Some(exec) = executors.get_mut(&job.name) {
-                exec.send(ExecutorCtl::WorkOn(job)).await.unwrap();
+            match executors.get_mut(&job.name) {
+                Some(exec) => exec.send(ExecutorCtl::WorkOn(job)).await.unwrap(),
+                None => warn!(
+                    message = "unknown job requested",
+                    job_name = %(&job.name),
+                    job_id = %(&job.id)
+                ),
             }
         }
 
@@ -57,6 +66,7 @@ impl Lakh for Manager {
 
     type JoinStream = Pin<Box<dyn Stream<Item = Result<Job, Status>> + Send + Sync + 'static>>;
 
+    #[instrument(name = "consumer", err)]
     async fn join(
         &self,
         job_result: Request<tonic::Streaming<JobResult>>,
@@ -75,13 +85,13 @@ impl Lakh for Manager {
         for job_name in job_names {
             let mut exec = guarded_execs
                 .entry(job_name.clone())
-                .or_insert_with(Executor::new)
+                .or_insert_with(|| Executor::new(job_name.clone()))
                 .clone();
             exec.send(ExecutorCtl::AddWorker(w.clone())).await.unwrap();
-            executors.insert(job_name, exec);
+            executors.insert(job_name.to_owned(), exec);
         }
 
-        tokio::spawn(async move {
+        let result_handler = async move {
             let mut result_stream = job_result.into_inner();
             while let Some(job_result) = result_stream.next().await {
                 let job_result = match job_result {
@@ -89,8 +99,8 @@ impl Lakh for Manager {
                     Err(_) => break,
                 };
 
-                if let Some(exec) = executors.get_mut(&job_result.job_name) {
-                    match JobStatus::from_i32(job_result.status).unwrap() {
+                match executors.get_mut(&job_result.job_name) {
+                    Some(exec) => match JobStatus::from_i32(job_result.status).unwrap() {
                         JobStatus::Failed => exec
                             .send(ExecutorCtl::HandleJobFaliure(job_result.job_id))
                             .await
@@ -99,10 +109,16 @@ impl Lakh for Manager {
                             .send(ExecutorCtl::HandleJobSuccess(job_result.job_id))
                             .await
                             .unwrap(),
-                    }
+                    },
+                    None => warn!(
+                        message = "got unknown job result",
+                        job_name = %(&job_result.job_name),
+                        job_id = %(&job_result.job_id)
+                    ),
                 }
             }
-        });
+        };
+        tokio::spawn(result_handler.in_current_span());
 
         Ok(Response::new(Box::pin(rx) as Self::JoinStream))
     }

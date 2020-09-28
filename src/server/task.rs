@@ -2,6 +2,8 @@ use rand::Rng;
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tokio::time::delay_for;
+use tracing::{info, instrument, warn};
+use tracing_futures::Instrument;
 
 use crate::executor::ExecutorCtl;
 use crate::pb::job::ExecutionTime;
@@ -40,14 +42,26 @@ impl std::ops::DerefMut for Task {
 }
 
 impl Task {
+    #[instrument(name = "task")]
     pub fn new(mut job: Job, mut to_exec: mpsc::Sender<ExecutorCtl>) -> Self {
         let (tx, mut rx) = mpsc::channel(10);
 
-        tokio::spawn(async move {
+        info!(
+            message = "created",
+            job_name = %(&job.name),
+            job_id = %(&job.id)
+        );
+
+        let task = async move {
             let mut try_count: u8 = 0;
 
             let res = loop {
                 if try_count == MAX_RETRY {
+                    warn!(
+                        message = "reached max retry",
+                        job_name = %(&job.name),
+                        job_id = %(&job.id)
+                    );
                     break Err(FailReason::MaxRetryReached);
                 };
 
@@ -121,15 +135,20 @@ impl Task {
             };
 
             match res {
-                Ok(_) => {}
+                Ok(_) => {
+                    info!(message = "finished", job_name = %job.name, job_id = %job.id);
+                }
                 Err(reason) => {
+                    warn!(message = "failed", job_name = %job.name, job_id = %job.id);
+
                     to_exec
                         .send(ExecutorCtl::HandleDyingJob(job, reason))
                         .await
                         .unwrap();
                 }
             }
-        });
+        };
+        tokio::spawn(task.in_current_span());
 
         Self { tx }
     }
