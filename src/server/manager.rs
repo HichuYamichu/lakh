@@ -30,12 +30,7 @@ impl Manager {
 impl Lakh for Manager {
     #[instrument(name = "producer", err)]
     async fn work(&self, request: Request<tonic::Streaming<Job>>) -> Result<Response<()>, Status> {
-        let job_names = parse_job_names(request.metadata());
-        let job_names = match job_names {
-            Ok(names) => names,
-            Err(e) => return Err(Status::invalid_argument(e)),
-        };
-
+        let job_names = parse_job_names(request.metadata())?;
         let mut executors = HashMap::with_capacity(job_names.len());
         let mut guarded_execs = self.executors.lock().await;
 
@@ -71,12 +66,7 @@ impl Lakh for Manager {
         &self,
         job_result: Request<tonic::Streaming<JobResult>>,
     ) -> Result<Response<Self::JoinStream>, Status> {
-        let job_names = parse_job_names(job_result.metadata());
-        let job_names = match job_names {
-            Ok(names) => names,
-            Err(e) => return Err(Status::invalid_argument(e)),
-        };
-
+        let job_names = parse_job_names(job_result.metadata())?;
         let (tx, rx) = mpsc::channel(10);
         let w = Worker::new(nanoid!(), tx);
         let mut executors = HashMap::with_capacity(job_names.len());
@@ -124,35 +114,12 @@ impl Lakh for Manager {
     }
 }
 
-#[derive(Debug)]
-enum ParseJobNamesError {
-    MissingField,
-    InvalidASCII,
-}
-
-impl std::fmt::Display for ParseJobNamesError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            ParseJobNamesError::MissingField => {
-                write!(f, "missing `job_names` field in metadata map")
-            }
-            ParseJobNamesError::InvalidASCII => write!(f, "invalid ASCII in `job_names` field"),
-        }
-    }
-}
-
-impl Into<String> for ParseJobNamesError {
-    fn into(self) -> String {
-        self.to_string()
-    }
-}
-
-fn parse_job_names(meta: &MetadataMap) -> Result<Vec<String>, ParseJobNamesError> {
+fn parse_job_names(meta: &MetadataMap) -> Result<Vec<String>, Status> {
     let res = meta
         .get("job_names")
-        .ok_or(ParseJobNamesError::MissingField)?
+        .ok_or_else(|| Status::invalid_argument("missing `job_names` field in metadata map"))?
         .to_str()
-        .map_err(|_| ParseJobNamesError::InvalidASCII)?
+        .map_err(|_| Status::invalid_argument("invalid ASCII in `job_names` field"))?
         .split(';')
         .map(|s| s.to_owned())
         .collect();
