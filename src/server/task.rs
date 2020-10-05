@@ -9,8 +9,6 @@ use crate::executor::ExecutorCtl;
 use crate::pb::job::ExecutionTime;
 use crate::pb::Job;
 
-const MAX_RETRY: u8 = 30;
-
 #[derive(Debug)]
 pub enum TaskCtl {
     Retry,
@@ -22,28 +20,34 @@ pub enum FailReason {
     MaxRetryReached,
 }
 
-#[derive(Clone)]
-pub struct Task {
-    tx: mpsc::Sender<TaskCtl>,
-}
+pub struct TaskHandle(mpsc::Sender<TaskCtl>);
 
-impl std::ops::Deref for Task {
+impl std::ops::Deref for TaskHandle {
     type Target = mpsc::Sender<TaskCtl>;
-
     fn deref(&self) -> &Self::Target {
-        &self.tx
+        &self.0
     }
 }
 
-impl std::ops::DerefMut for Task {
+impl std::ops::DerefMut for TaskHandle {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.tx
+        &mut self.0
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct Task {
+    max_retry: u8,
+    to_exec: mpsc::Sender<ExecutorCtl>,
 }
 
 impl Task {
+    pub fn new(to_exec: mpsc::Sender<ExecutorCtl>, max_retry: u8) -> Self {
+        Self { to_exec, max_retry }
+    }
+
     #[instrument(name = "task")]
-    pub fn new(mut job: Job, mut to_exec: mpsc::Sender<ExecutorCtl>) -> Self {
+    pub fn spawn(&self, mut job: Job) -> TaskHandle {
         let (tx, mut rx) = mpsc::channel(10);
 
         info!(
@@ -52,11 +56,13 @@ impl Task {
             job_id = %(&job.id)
         );
 
+        let max_retry = self.max_retry;
+        let mut to_exec = self.to_exec.clone();
         let task = async move {
             let mut try_count: u8 = 0;
 
             let res = loop {
-                if try_count == MAX_RETRY {
+                if try_count == max_retry {
                     warn!(
                         message = "reached max retry",
                         job_name = %(&job.name),
@@ -130,7 +136,7 @@ impl Task {
         };
         tokio::spawn(task.in_current_span());
 
-        Self { tx }
+        TaskHandle(tx)
     }
 }
 

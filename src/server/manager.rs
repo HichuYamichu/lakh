@@ -8,20 +8,23 @@ use tonic::{Request, Response, Status};
 use tracing::{instrument, warn};
 use tracing_futures::Instrument;
 
-use crate::executor::{Executor, ExecutorCtl};
+use crate::executor::{Executor, ExecutorCtl, ExecutorHandle};
 use crate::pb::lakh_server::Lakh;
 use crate::pb::{Job, JobResult};
 use crate::worker::Worker;
+use crate::Config;
 
 #[derive(Debug)]
 pub struct Manager {
-    executors: Mutex<HashMap<String, Executor>>,
+    exec_handles: Mutex<HashMap<String, ExecutorHandle>>,
+    exec_spawner: Executor,
 }
 
 impl Manager {
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
-            executors: Mutex::new(HashMap::new()),
+            exec_handles: Mutex::new(HashMap::new()),
+            exec_spawner: Executor::new(config.max_retry),
         }
     }
 }
@@ -32,16 +35,16 @@ impl Lakh for Manager {
     async fn work(&self, request: Request<tonic::Streaming<Job>>) -> Result<Response<()>, Status> {
         let job_names = parse_job_names(request.metadata())?;
         let mut executors = HashMap::with_capacity(job_names.len());
-        let mut guarded_execs = self.executors.lock().await;
+        let mut guarded_handles = self.exec_handles.lock().await;
 
         for job_name in job_names {
-            let exec = guarded_execs
+            let exec = guarded_handles
                 .entry(job_name.clone())
-                .or_insert_with(|| Executor::new(job_name.clone()))
+                .or_insert_with(|| self.exec_spawner.spawn(job_name.clone()))
                 .clone();
             executors.insert(job_name, exec);
         }
-        drop(guarded_execs);
+        drop(guarded_handles);
 
         let mut job_stream = request.into_inner();
         while let Some(job) = job_stream.next().await {
@@ -70,12 +73,12 @@ impl Lakh for Manager {
         let (tx, rx) = mpsc::channel(10);
         let w = Worker::new(nanoid!(), tx);
         let mut executors = HashMap::with_capacity(job_names.len());
-        let mut guarded_execs = self.executors.lock().await;
+        let mut guarded_handles = self.exec_handles.lock().await;
 
         for job_name in job_names {
-            let mut exec = guarded_execs
+            let mut exec = guarded_handles
                 .entry(job_name.clone())
-                .or_insert_with(|| Executor::new(job_name.clone()))
+                .or_insert_with(|| self.exec_spawner.spawn(job_name.clone()))
                 .clone();
             exec.send(ExecutorCtl::AddWorker(w.clone())).await.unwrap();
             executors.insert(job_name.to_owned(), exec);

@@ -28,7 +28,7 @@ Notes
 TODO
 ------------
 
-- logging,
-- configuration,
+- ~~logging~~,
+- ~~configuration~~,
 - introspection API,
 - persistence?

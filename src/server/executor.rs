@@ -20,30 +20,37 @@ pub enum ExecutorCtl {
     HandleDyingJob(Job, FailReason),
 }
 
-#[derive(Clone, Debug)]
-pub struct Executor {
-    tx: mpsc::Sender<ExecutorCtl>,
-}
+#[derive(Debug)]
+pub struct ExecutorHandle(mpsc::Sender<ExecutorCtl>);
 
-impl std::ops::Deref for Executor {
+impl std::ops::Deref for ExecutorHandle {
     type Target = mpsc::Sender<ExecutorCtl>;
 
     fn deref(&self) -> &Self::Target {
-        &self.tx
+        &self.0
     }
 }
 
-impl std::ops::DerefMut for Executor {
+impl std::ops::DerefMut for ExecutorHandle {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.tx
+        &mut self.0
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct Executor {
+    max_retry: u8,
 }
 
 impl Executor {
+    pub fn new(max_retry: u8) -> Self {
+        Self { max_retry }
+    }
+
     #[instrument(name = "executor")]
-    pub fn new(job_name: String) -> Self {
+    pub fn spawn(&self, job_name: String) -> ExecutorHandle {
         let (tx, mut rx) = mpsc::channel(100);
-        let tx_clone = tx.clone();
+        let task = Task::new(tx.clone(), self.max_retry);
 
         info!(message = "created", %job_name);
         let exec = async move {
@@ -56,7 +63,7 @@ impl Executor {
                 match ctl {
                     ExecutorCtl::WorkOn(j) => {
                         let key = j.id.clone();
-                        let task = Task::new(j, tx_clone.clone());
+                        let task = task.spawn(j);
                         tasks.insert(key, task);
                     }
                     ExecutorCtl::AddWorker(w) => {
@@ -114,6 +121,6 @@ impl Executor {
         };
         tokio::spawn(exec.in_current_span());
 
-        Self { tx }
+        ExecutorHandle(tx)
     }
 }
