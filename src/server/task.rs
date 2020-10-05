@@ -65,32 +65,13 @@ impl Task {
                     break Err(FailReason::MaxRetryReached);
                 };
 
-                let wait_dur = match &job.execution_time {
-                    Some(ex_time) => match ex_time {
-                        ExecutionTime::Immediate(_) => Duration::new(0, 0),
-                        ExecutionTime::Scheduled(timestamp) => {
-                            let duration_since_epoch =
-                                Duration::new(timestamp.seconds as u64, timestamp.nanos as u32);
-                            let system_duration_since_epoch = SystemTime::now()
-                                .duration_since(SystemTime::UNIX_EPOCH)
-                                .unwrap();
-                            duration_since_epoch - system_duration_since_epoch
-                        }
-                        ExecutionTime::Delayed(dur) => {
-                            Duration::new(dur.seconds as u64, dur.nanos as u32)
-                        }
-                    },
-                    None => Duration::new(0, 0),
-                };
-
+                let wait_dur = calc_wait_dur(&job.execution_time);
                 let mut delay = delay_for(wait_dur);
                 loop {
                     tokio::select! {
                         _ = &mut delay => break,
-                        Some(ctl) = rx.recv() => {
-                            match ctl {
-                                _ => { /* hadle status queries in the future */ },
-                            }
+                        Some(_) = rx.recv() => {
+                           // hadle status queries in the future
                         }
                     }
                 }
@@ -122,7 +103,6 @@ impl Task {
 
                 let dur = Duration::from_secs(reservation_time.seconds as u64);
                 let mut delay = delay_for(dur);
-
                 tokio::select! {
                     _ = &mut delay => {},
                     Some(ctl) = rx.recv() => {
@@ -165,4 +145,22 @@ fn expand_delay(job: &mut Job, try_count: u8) {
         nanos: 0,
     };
     job.execution_time = Some(ExecutionTime::Delayed(delay));
+}
+
+fn calc_wait_dur(exec_time: &Option<ExecutionTime>) -> Duration {
+    match exec_time {
+        Some(ex_time) => match ex_time {
+            ExecutionTime::Immediate(_) => Duration::new(0, 0),
+            ExecutionTime::Scheduled(timestamp) => {
+                let duration_since_epoch =
+                    Duration::new(timestamp.seconds as u64, timestamp.nanos as u32);
+                let system_duration_since_epoch = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap();
+                duration_since_epoch - system_duration_since_epoch
+            }
+            ExecutionTime::Delayed(dur) => Duration::new(dur.seconds as u64, dur.nanos as u32),
+        },
+        None => Duration::new(0, 0),
+    }
 }

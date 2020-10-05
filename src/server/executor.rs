@@ -6,11 +6,9 @@ use tokio::time::delay_for;
 use tracing::{info, instrument, warn};
 use tracing_futures::Instrument;
 
-use crate::pb::Job;
+use crate::pb::{Job, JobResult, JobStatus};
 use crate::task::{FailReason, Task, TaskCtl};
 use crate::worker::{Worker, WorkerId};
-
-type JobId = String;
 
 #[derive(Debug)]
 pub enum ExecutorCtl {
@@ -18,8 +16,7 @@ pub enum ExecutorCtl {
     AddWorker(Worker),
     RemoveWorker(WorkerId),
     ProvideWorker(mpsc::Sender<Worker>),
-    HandleJobSuccess(JobId),
-    HandleJobFaliure(JobId),
+    HandleJobResult(JobResult),
     HandleDyingJob(Job, FailReason),
 }
 
@@ -75,19 +72,19 @@ impl Executor {
                         workers.remove(id);
                         info!(message = "worker removed", %id, %job_name);
                     }
-                    ExecutorCtl::HandleJobSuccess(ref id) => {
-                        // someone else might have already reported completion
-                        if let Some(mut task) = tasks.remove(id) {
-                            info!(message = "task removed", %id, %job_name);
-                            // if job had no reservation this task has already exited
-                            // and this send will fail
-                            let _ = task.send(TaskCtl::Terminate).await;
-                        }
-                    }
-                    ExecutorCtl::HandleJobFaliure(ref id) => {
-                        // above applies here as well
-                        if let Some(task) = tasks.get_mut(id) {
-                            let _ = task.send(TaskCtl::Retry).await;
+                    ExecutorCtl::HandleJobResult(res) => {
+                        match JobStatus::from_i32(res.status).unwrap() {
+                            JobStatus::Failed => {
+                                if let Some(task) = tasks.get_mut(&res.job_id) {
+                                    let _ = task.send(TaskCtl::Retry).await;
+                                }
+                            }
+                            JobStatus::Succeeded => {
+                                if let Some(mut task) = tasks.remove(&res.job_id) {
+                                    info!(message = "task removed", %res.job_id, %job_name);
+                                    let _ = task.send(TaskCtl::Terminate).await;
+                                }
+                            }
                         }
                     }
                     ExecutorCtl::HandleDyingJob(j, _) => {

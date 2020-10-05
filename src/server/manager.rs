@@ -10,7 +10,7 @@ use tracing_futures::Instrument;
 
 use crate::executor::{Executor, ExecutorCtl};
 use crate::pb::lakh_server::Lakh;
-use crate::pb::{Job, JobResult, JobStatus};
+use crate::pb::{Job, JobResult};
 use crate::worker::Worker;
 
 #[derive(Debug)]
@@ -90,16 +90,10 @@ impl Lakh for Manager {
                 };
 
                 match executors.get_mut(&job_result.job_name) {
-                    Some(exec) => match JobStatus::from_i32(job_result.status).unwrap() {
-                        JobStatus::Failed => exec
-                            .send(ExecutorCtl::HandleJobFaliure(job_result.job_id))
-                            .await
-                            .unwrap(),
-                        JobStatus::Succeeded => exec
-                            .send(ExecutorCtl::HandleJobSuccess(job_result.job_id))
-                            .await
-                            .unwrap(),
-                    },
+                    Some(exec) => exec
+                        .send(ExecutorCtl::HandleJobResult(job_result))
+                        .await
+                        .unwrap(),
                     None => warn!(
                         message = "got unknown job result",
                         job_name = %(&job_result.job_name),
