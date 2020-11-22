@@ -30,5 +30,5 @@ TODO
 
 - ~~logging~~,
 - ~~configuration~~,
-- introspection API,
+- ~~introspection API~~,
 - persistence?

@@ -7,8 +7,9 @@ import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
 service Lakh {
-  rpc Work(stream Job) returns (google.protobuf.Empty) {}
-  rpc Join(stream JobResult) returns (stream Job) {}
+  rpc Work(stream Job) returns(google.protobuf.Empty) {}
+  rpc Join(stream JobResult) returns(stream Job) {}
+  rpc GetDeadJobs(google.protobuf.Empty) returns(DeadJobs) {}
 }
 
 message Job {
@@ -23,11 +24,7 @@ message Job {
   google.protobuf.Duration reservation_time = 7;
 }
 
-enum JobKind {
-  IMMEDIATE = 0;
-  SCHEDULED = 1;
-  DELAYED = 2;
-}
+enum JobKind { IMMEDIATE = 0; SCHEDULED = 1; DELAYED = 2; }
 
 message JobResult {
   string job_id = 1;
@@ -35,7 +32,6 @@ message JobResult {
   JobStatus status = 3;
 }
 
-enum JobStatus {
-  FAILED = 0;
-  SUCCEEDED = 1;
-}
+enum JobStatus { FAILED = 0; SUCCEEDED = 1; }
+
+message DeadJobs { repeated Job jobs = 1; }

@@ -10,7 +10,7 @@ use tracing_futures::Instrument;
 
 use crate::executor::{Executor, ExecutorCtl, ExecutorHandle};
 use crate::pb::lakh_server::Lakh;
-use crate::pb::{Job, JobResult};
+use crate::pb::{DeadJobs, Job, JobResult};
 use crate::worker::Worker;
 use crate::Config;
 
@@ -108,6 +108,26 @@ impl Lakh for Manager {
         tokio::spawn(result_handler.in_current_span());
 
         Ok(Response::new(Box::pin(rx) as Self::JoinStream))
+    }
+
+    async fn get_dead_jobs(&self, _req: Request<()>) -> Result<Response<DeadJobs>, Status> {
+        let (tx, mut rx) = mpsc::channel(5);
+        let mut handles = self.exec_handles.lock().await;
+
+        for (_, exec) in handles.iter_mut() {
+            exec.send(ExecutorCtl::ReportDeadJobs(tx.clone()))
+                .await
+                .unwrap();
+        }
+
+        let mut jobs = Vec::new();
+        for _ in 0..handles.len() {
+            let v = rx.recv().await.unwrap();
+            jobs.extend(v);
+        }
+
+        let res = Response::new(DeadJobs { jobs });
+        Ok(res)
     }
 }
 

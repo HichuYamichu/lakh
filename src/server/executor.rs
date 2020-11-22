@@ -18,6 +18,7 @@ pub enum ExecutorCtl {
     ProvideWorker(mpsc::Sender<Worker>),
     HandleJobResult(JobResult),
     HandleDyingJob(Job, FailReason),
+    ReportDeadJobs(mpsc::Sender<Vec<Job>>),
 }
 
 #[derive(Debug)]
@@ -115,6 +116,9 @@ impl Executor {
                                 warn!(%job_name, "starving {} tasks", starved_count);
                             }
                         }
+                    }
+                    ExecutorCtl::ReportDeadJobs(mut tx) => {
+                        tx.send(dead_jobs.clone()).await.unwrap();
                     }
                 }
             }
